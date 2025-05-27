@@ -4,20 +4,21 @@ import { verifyToken } from "../middleware/auth.js";
 
 const router = express.Router();
 
-// Fetch all active league events
 router.get("/active-leagues", async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT 
-        *,
+        events.*,
+        clubs.logo_url,
         CASE
-          WHEN CURRENT_DATE < start_date THEN 'upcoming'
-          WHEN CURRENT_DATE BETWEEN start_date AND end_date THEN 'active'
+          WHEN CURRENT_DATE < events.start_date THEN 'upcoming'
+          WHEN CURRENT_DATE BETWEEN events.start_date AND events.end_date THEN 'active'
           ELSE 'completed'
         END AS status
-      FROM events 
-      WHERE type = 'league' 
-      ORDER BY start_date ASC
+      FROM events
+      LEFT JOIN clubs ON events.club_id = clubs.id
+      WHERE events.type = 'league'
+      ORDER BY events.start_date ASC
     `);
     res.json(result.rows);
   } catch (err) {

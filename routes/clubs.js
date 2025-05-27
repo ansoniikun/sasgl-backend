@@ -36,11 +36,9 @@ router.post(
     } = req.body;
 
     const userId = req.user.id;
-
     const logoPath = req.file ? `/uploads/logos/${req.file.filename}` : null;
 
     try {
-      // Get logged-in user's details
       const userResult = await pool.query(
         "SELECT name, email FROM users WHERE id = $1",
         [userId]
@@ -51,13 +49,25 @@ router.post(
         return res.status(404).json({ message: "User not found." });
       }
 
-      // Promote to captain
+      // 🛑 Check if user already created a club
+      const existingClub = await pool.query(
+        "SELECT id FROM clubs WHERE created_by = $1",
+        [userId]
+      );
+
+      if (existingClub.rows.length > 0) {
+        return res
+          .status(400)
+          .json({ message: "Cannot create club. You have an existing club." });
+      }
+
+      // Promote user to captain
       await pool.query("UPDATE users SET role = 'captain' WHERE id = $1", [
         userId,
       ]);
 
-      // Create club with snapshot of captain info
-      const result = await pool.query(
+      // Create new club
+      await pool.query(
         `
       INSERT INTO clubs
         (name, email, phone, description, logo_url, created_by, is_private, status,
@@ -267,6 +277,48 @@ router.patch(
       res.json({ success: true, member: result.rows[0] });
     } catch (error) {
       console.error("Error approving member:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);
+
+// DELETE /api/clubs/:clubId/members/:userId/reject
+router.delete(
+  "/:clubId/members/:userId/reject",
+  verifyToken,
+  async (req, res) => {
+    const { clubId, userId } = req.params;
+    const currentUserId = req.user.id;
+
+    try {
+      // Confirm that the requester is the club's captain
+      const club = await pool.query(
+        `SELECT * FROM clubs WHERE id = $1 AND created_by = $2`,
+        [clubId, currentUserId]
+      );
+
+      if (club.rows.length === 0) {
+        return res
+          .status(403)
+          .json({ error: "Unauthorized: Only captains can reject requests" });
+      }
+
+      // Delete the pending join request
+      const result = await pool.query(
+        `DELETE FROM club_members WHERE club_id = $1 AND user_id = $2 AND status = 'pending' RETURNING *`,
+        [clubId, userId]
+      );
+
+      if (result.rowCount === 0) {
+        return res.status(404).json({ error: "Pending request not found" });
+      }
+
+      res.json({
+        success: true,
+        message: "Join request rejected and removed.",
+      });
+    } catch (error) {
+      console.error("Error rejecting member:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   }
