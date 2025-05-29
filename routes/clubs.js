@@ -234,7 +234,7 @@ router.get("/:id/members", verifyToken, async (req, res) => {
         .json({ error: "Access denied: You are not a member of this club" });
     }
 
-    // Fetch club members
+    // Fetch club members with total_points from user_stats
     const fetchMembersQuery = `
       SELECT 
         u.id,
@@ -242,9 +242,11 @@ router.get("/:id/members", verifyToken, async (req, res) => {
         u.email,
         u.role,
         cm.status,
-        cm.joined_at
+        cm.joined_at,
+        COALESCE(us.total_points, 0) AS score
       FROM club_members cm
       JOIN users u ON u.id = cm.user_id
+      LEFT JOIN user_stats us ON us.user_id = u.id
       WHERE cm.club_id = $1
       ORDER BY cm.joined_at DESC;
     `;
