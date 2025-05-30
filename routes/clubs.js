@@ -1,5 +1,5 @@
 import express from "express";
-import { verifyToken } from "../middleware/auth.js";
+import { verifyToken, requireCaptain } from "../middleware/auth.js";
 import pool from "../db/index.js";
 import bcrypt from "bcrypt";
 import multer from "multer";
@@ -431,6 +431,217 @@ router.get("/league/:clubId", async (req, res) => {
   } catch (err) {
     console.error("Error fetching league details:", err);
     res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+router.post(
+  "/submit-stats",
+  verifyToken,
+  requireCaptain, // custom middleware to allow only club captains
+  async (req, res) => {
+    const {
+      eventId,
+      userId,
+      playerScore,
+      points,
+      birdies = 0,
+      strokes = 0,
+      putts = 0,
+      greensInRegulation = 0,
+      fairwaysHit = 0,
+      notes = "",
+    } = req.body;
+
+    const submittedBy = req.user.id;
+
+    if (!eventId || !userId || typeof playerScore !== "number") {
+      return res
+        .status(400)
+        .json({ error: "Missing or invalid required fields" });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // Insert or update participant stats
+      await client.query(
+        `
+        INSERT INTO event_participants (
+          event_id, user_id, score, points, birdies, strokes, putts,
+          greens_in_reg, fairways_hit, notes, submitted_by, submitted_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+        ON CONFLICT (event_id, user_id)
+        DO UPDATE SET
+          score = EXCLUDED.score,
+          points = EXCLUDED.points,
+          birdies = EXCLUDED.birdies,
+          strokes = EXCLUDED.strokes,
+          putts = EXCLUDED.putts,
+          greens_in_reg = EXCLUDED.greens_in_reg,
+          fairways_hit = EXCLUDED.fairways_hit,
+          notes = EXCLUDED.notes,
+          submitted_by = EXCLUDED.submitted_by,
+          submitted_at = NOW()
+        `,
+        [
+          eventId,
+          userId,
+          playerScore,
+          points ?? 0,
+          birdies,
+          strokes,
+          putts,
+          greensInRegulation,
+          fairwaysHit,
+          notes,
+          submittedBy,
+        ]
+      );
+
+      // Update event_user_stats
+      await client.query(
+        `
+        INSERT INTO event_user_stats (
+          event_id, user_id, games_played, points, birdies, avg_points
+        ) VALUES ($1, $2, 1, $3, $4, $5)
+        ON CONFLICT (event_id, user_id)
+        DO UPDATE SET
+          games_played = event_user_stats.games_played + 1,
+          points = event_user_stats.points + $3,
+          birdies = event_user_stats.birdies + $4,
+          avg_points = (event_user_stats.points::numeric + $5) / (event_user_stats.games_played + 1)::numeric
+        `,
+        [eventId, userId, points ?? 0, birdies, points ?? 0]
+      );
+
+      // Update user_stats
+      await client.query(
+        `
+        INSERT INTO user_stats (
+          user_id, total_games, total_points, total_birdies, total_strokes,
+          total_putts, greens_in_regulation, fairways_hit, avg_points, last_updated
+        ) VALUES (
+          $1, 1, $2, $3, $4, $5, $6, $7, $8, NOW()
+        )
+        ON CONFLICT (user_id)
+        DO UPDATE SET
+          total_games = COALESCE(user_stats.total_games, 0) + 1,
+          total_points = COALESCE(user_stats.total_points, 0) + $2,
+          total_birdies = COALESCE(user_stats.total_birdies, 0) + $3,
+          total_strokes = COALESCE(user_stats.total_strokes, 0) + $4,
+          total_putts = COALESCE(user_stats.total_putts, 0) + $5,
+          greens_in_regulation = COALESCE(user_stats.greens_in_regulation, 0) + $6,
+          fairways_hit = COALESCE(user_stats.fairways_hit, 0) + $7,
+          avg_points = 
+            CASE 
+              WHEN COALESCE(user_stats.total_games, 0) + 1 = 0 THEN 0
+              ELSE (COALESCE(user_stats.total_points, 0) + $8)::numeric / (COALESCE(user_stats.total_games, 0) + 1)
+            END,
+          last_updated = NOW()
+        `,
+        [
+          userId,
+          points ?? 0,
+          birdies,
+          strokes,
+          putts,
+          greensInRegulation,
+          fairwaysHit,
+          points ?? 0,
+        ]
+      );
+
+      // Get clubs for user
+      const clubRes = await client.query(
+        `SELECT club_id FROM club_members WHERE user_id = $1`,
+        [userId]
+      );
+
+      // Update club_stats for each club
+      for (const row of clubRes.rows) {
+        const clubId = row.club_id;
+
+        await client.query(
+          `
+          INSERT INTO club_stats (
+            club_id, total_games, total_points, total_birdies,
+            total_strokes, total_putts, greens_in_regulation,
+            fairways_hit, avg_points_per_player, last_updated
+          ) VALUES (
+            $1, 1, $2, $3, $4, $5, $6, $7, $8, NOW()
+          )
+          ON CONFLICT (club_id)
+          DO UPDATE SET
+            total_games = club_stats.total_games + 1,
+            total_points = club_stats.total_points + $2,
+            total_birdies = club_stats.total_birdies + $3,
+            total_strokes = club_stats.total_strokes + $4,
+            total_putts = club_stats.total_putts + $5,
+            greens_in_regulation = club_stats.greens_in_regulation + $6,
+            fairways_hit = club_stats.fairways_hit + $7,
+            avg_points_per_player = (club_stats.total_points::numeric + $8) / (club_stats.total_games + 1)::numeric,
+            last_updated = NOW()
+          `,
+          [
+            clubId,
+            points ?? 0,
+            birdies,
+            strokes,
+            putts,
+            greensInRegulation,
+            fairwaysHit,
+            points ?? 0,
+          ]
+        );
+      }
+
+      await client.query("COMMIT");
+      res.status(200).json({ message: "Stats recorded successfully." });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      console.error("Error recording stats:", error);
+      res.status(500).json({ error: "Internal server error" });
+    } finally {
+      client.release();
+    }
+  }
+);
+
+// Get events by club_id
+router.get("/events/:clubId", async (req, res) => {
+  const { clubId } = req.params;
+
+  try {
+    const result = await pool.query(
+      "SELECT id, name FROM events WHERE club_id = $1",
+      [clubId]
+    );
+    res.status(200).json(result.rows);
+  } catch (error) {
+    console.error("Error fetching events:", error);
+    res.status(500).json({ error: "Internal server error." });
+  }
+});
+
+// Get participants for an event with names
+router.get("/event-participants/:eventId", async (req, res) => {
+  const { eventId } = req.params;
+
+  try {
+    const result = await pool.query(
+      `
+      SELECT u.id as user_id, u.name
+      FROM event_participants ep
+      JOIN users u ON ep.user_id = u.id
+      WHERE ep.event_id = $1
+      `,
+      [eventId]
+    );
+    res.status(200).json(result.rows);
+  } catch (error) {
+    console.error("Error fetching participants:", error);
+    res.status(500).json({ error: "Internal server error." });
   }
 });
 
