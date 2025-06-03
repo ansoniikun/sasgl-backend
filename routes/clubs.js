@@ -20,7 +20,6 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// POST /api/clubs/register
 router.post(
   "/register",
   verifyToken,
@@ -43,6 +42,7 @@ router.post(
         "SELECT name, email FROM users WHERE id = $1",
         [userId]
       );
+
       const user = userResult.rows[0];
 
       if (!user) {
@@ -56,27 +56,40 @@ router.post(
       );
 
       if (existingClub.rows.length > 0) {
-        return res
-          .status(400)
-          .json({ message: "Cannot create club. You have an existing club." });
+        return res.status(400).json({
+          message: "Cannot create club. You already have a club.",
+        });
       }
 
       // Promote user to captain
-      await pool.query("UPDATE users SET role = 'captain' WHERE id = $1", [
+      await pool.query("UPDATE users SET role = $1 WHERE id = $2", [
+        "captain",
         userId,
       ]);
 
-      // Create new club
-      await pool.query(
+      // Insert new club
+      const result = await pool.query(
         `
-      INSERT INTO clubs
-        (name, email, phone, description, logo_url, created_by, is_private, status,
-         captain_name, captain_email, captain_contact_no, created_at, updated_at)
-      VALUES
-        ($1, $2, $3, $4, $5, $6, $7, 'pending',
-         $8, $9, $10, NOW(), NOW())
-      RETURNING id
-      `,
+        INSERT INTO clubs (
+          name,
+          email,
+          phone,
+          description,
+          logo_url,
+          created_by,
+          is_private,
+          approved,
+          captain_name,
+          captain_email,
+          captain_contact_no,
+          created_at,
+          updated_at
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8,
+          $9, $10, $11, NOW(), NOW()
+        )
+        RETURNING id
+        `,
         [
           clubName,
           clubEmail,
@@ -85,16 +98,20 @@ router.post(
           logoPath,
           userId,
           isPrivateClub === "true" || isPrivateClub === true,
+          false, // approved
           user.name,
           user.email,
           captainContactNo,
         ]
       );
 
-      return res.status(201).json({ message: "Club registered successfully." });
+      res.status(201).json({
+        message: "Club registered successfully.",
+        clubId: result.rows[0].id,
+      });
     } catch (err) {
       console.error("Error registering club:", err);
-      return res.status(500).json({ error: "Failed to register club" });
+      res.status(500).json({ error: "Failed to register club" });
     }
   }
 );
@@ -434,39 +451,36 @@ router.get("/league/:clubId", async (req, res) => {
   }
 });
 
-router.post(
-  "/submit-stats",
-  verifyToken,
-  requireCaptain, // custom middleware to allow only club captains
-  async (req, res) => {
-    const {
-      eventId,
-      userId,
-      playerScore,
-      points,
-      birdies = 0,
-      strokes = 0,
-      putts = 0,
-      greensInRegulation = 0,
-      fairwaysHit = 0,
-      notes = "",
-    } = req.body;
+router.post("/submit-stats", verifyToken, requireCaptain, async (req, res) => {
+  const {
+    eventId,
+    userId,
+    playerScore,
+    points = 0,
+    birdies = 0,
+    strokes = 0,
+    putts = 0,
+    greensInRegulation = 0,
+    fairwaysHit = 0,
+    notes = "",
+  } = req.body;
 
-    const submittedBy = req.user.id;
+  const submittedBy = req.user.id;
 
-    if (!eventId || !userId || typeof playerScore !== "number") {
-      return res
-        .status(400)
-        .json({ error: "Missing or invalid required fields" });
-    }
+  // Validate required fields
+  if (!eventId || !userId || typeof playerScore !== "number") {
+    return res
+      .status(400)
+      .json({ error: "Missing or invalid required fields" });
+  }
 
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
 
-      // Insert or update participant stats
-      await client.query(
-        `
+    // Insert or update stats in event_participants
+    await client.query(
+      `
         INSERT INTO event_participants (
           event_id, user_id, score, points, birdies, strokes, putts,
           greens_in_reg, fairways_hit, notes, submitted_by, submitted_at
@@ -484,24 +498,24 @@ router.post(
           submitted_by = EXCLUDED.submitted_by,
           submitted_at = NOW()
         `,
-        [
-          eventId,
-          userId,
-          playerScore,
-          points ?? 0,
-          birdies,
-          strokes,
-          putts,
-          greensInRegulation,
-          fairwaysHit,
-          notes,
-          submittedBy,
-        ]
-      );
+      [
+        eventId,
+        userId,
+        playerScore,
+        points,
+        birdies,
+        strokes,
+        putts,
+        greensInRegulation,
+        fairwaysHit,
+        notes,
+        submittedBy,
+      ]
+    );
 
-      // Update event_user_stats
-      await client.query(
-        `
+    // Update event_user_stats
+    await client.query(
+      `
         INSERT INTO event_user_stats (
           event_id, user_id, games_played, points, birdies, avg_points
         ) VALUES ($1, $2, 1, $3, $4, $5)
@@ -512,12 +526,12 @@ router.post(
           birdies = event_user_stats.birdies + $4,
           avg_points = (event_user_stats.points::numeric + $5) / (event_user_stats.games_played + 1)::numeric
         `,
-        [eventId, userId, points ?? 0, birdies, points ?? 0]
-      );
+      [eventId, userId, points, birdies, points]
+    );
 
-      // Update user_stats
-      await client.query(
-        `
+    // Update user_stats
+    await client.query(
+      `
         INSERT INTO user_stats (
           user_id, total_games, total_points, total_birdies, total_strokes,
           total_putts, greens_in_regulation, fairways_hit, avg_points, last_updated
@@ -540,73 +554,72 @@ router.post(
             END,
           last_updated = NOW()
         `,
-        [
-          userId,
-          points ?? 0,
-          birdies,
-          strokes,
-          putts,
-          greensInRegulation,
-          fairwaysHit,
-          points ?? 0,
-        ]
-      );
+      [
+        userId,
+        points,
+        birdies,
+        strokes,
+        putts,
+        greensInRegulation,
+        fairwaysHit,
+        points,
+      ]
+    );
 
-      // Get clubs for user
-      const clubRes = await client.query(
-        `SELECT club_id FROM club_members WHERE user_id = $1`,
-        [userId]
-      );
+    // Get user clubs
+    const clubRes = await client.query(
+      `SELECT club_id FROM club_members WHERE user_id = $1`,
+      [userId]
+    );
 
-      // Update club_stats for each club
-      for (const row of clubRes.rows) {
-        const clubId = row.club_id;
-
-        await client.query(
+    // Parallel update club_stats
+    await Promise.all(
+      clubRes.rows.map(({ club_id }) =>
+        client.query(
           `
-          INSERT INTO club_stats (
-            club_id, total_games, total_points, total_birdies,
-            total_strokes, total_putts, greens_in_regulation,
-            fairways_hit, avg_points_per_player, last_updated
-          ) VALUES (
-            $1, 1, $2, $3, $4, $5, $6, $7, $8, NOW()
-          )
-          ON CONFLICT (club_id)
-          DO UPDATE SET
-            total_games = club_stats.total_games + 1,
-            total_points = club_stats.total_points + $2,
-            total_birdies = club_stats.total_birdies + $3,
-            total_strokes = club_stats.total_strokes + $4,
-            total_putts = club_stats.total_putts + $5,
-            greens_in_regulation = club_stats.greens_in_regulation + $6,
-            fairways_hit = club_stats.fairways_hit + $7,
-            avg_points_per_player = (club_stats.total_points::numeric + $8) / (club_stats.total_games + 1)::numeric,
-            last_updated = NOW()
-          `,
+            INSERT INTO club_stats (
+              club_id, total_games, total_points, total_birdies,
+              total_strokes, total_putts, greens_in_regulation,
+              fairways_hit, avg_points_per_player, last_updated
+            ) VALUES (
+              $1, 1, $2, $3, $4, $5, $6, $7, $8, NOW()
+            )
+            ON CONFLICT (club_id)
+            DO UPDATE SET
+              total_games = club_stats.total_games + 1,
+              total_points = club_stats.total_points + $2,
+              total_birdies = club_stats.total_birdies + $3,
+              total_strokes = club_stats.total_strokes + $4,
+              total_putts = club_stats.total_putts + $5,
+              greens_in_regulation = club_stats.greens_in_regulation + $6,
+              fairways_hit = club_stats.fairways_hit + $7,
+              avg_points_per_player = (club_stats.total_points::numeric + $8) / (club_stats.total_games + 1)::numeric,
+              last_updated = NOW()
+            `,
           [
-            clubId,
-            points ?? 0,
+            club_id,
+            points,
             birdies,
             strokes,
             putts,
             greensInRegulation,
             fairwaysHit,
-            points ?? 0,
+            points,
           ]
-        );
-      }
+        )
+      )
+    );
 
-      await client.query("COMMIT");
-      res.status(200).json({ message: "Stats recorded successfully." });
-    } catch (error) {
-      await client.query("ROLLBACK");
-      console.error("Error recording stats:", error);
-      res.status(500).json({ error: "Internal server error" });
-    } finally {
-      client.release();
-    }
+    await client.query("COMMIT");
+    res.status(200).json({ message: "Stats recorded successfully." });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Error recording stats:", error);
+    res.status(500).json({ error: "Internal server error" });
+  } finally {
+    client.release();
   }
-);
+});
 
 // Get events by club_id
 router.get("/events/:clubId", async (req, res) => {
