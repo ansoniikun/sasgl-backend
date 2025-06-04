@@ -1,10 +1,8 @@
 import express from "express";
 import { verifyToken, requireCaptain } from "../middleware/auth.js";
 import pool from "../db/index.js";
-import bcrypt from "bcrypt";
 import multer from "multer";
 import path from "path";
-import fs from "fs";
 
 const router = express.Router();
 
@@ -25,20 +23,18 @@ router.post(
   verifyToken,
   upload.single("clubLogo"),
   async (req, res) => {
-    const {
-      clubName,
-      clubEmail,
-      clubPhone,
-      clubDescription,
-      captainContactNo,
-      isPrivateClub,
-    } = req.body;
+    const { clubName, clubDescription, captainContactNo, isPrivateClub } =
+      req.body;
 
     const userId = req.user.id;
     const logoPath = req.file ? `/uploads/logos/${req.file.filename}` : null;
 
+    const client = await pool.connect();
+
     try {
-      const userResult = await pool.query(
+      await client.query("BEGIN");
+
+      const userResult = await client.query(
         "SELECT name, email FROM users WHERE id = $1",
         [userId]
       );
@@ -46,34 +42,34 @@ router.post(
       const user = userResult.rows[0];
 
       if (!user) {
+        await client.query("ROLLBACK");
         return res.status(404).json({ message: "User not found." });
       }
 
-      // 🛑 Check if user already created a club
-      const existingClub = await pool.query(
+      // Check if user already created a club
+      const existingClub = await client.query(
         "SELECT id FROM clubs WHERE created_by = $1",
         [userId]
       );
 
       if (existingClub.rows.length > 0) {
+        await client.query("ROLLBACK");
         return res.status(400).json({
           message: "Cannot create club. You already have a club.",
         });
       }
 
       // Promote user to captain
-      await pool.query("UPDATE users SET role = $1 WHERE id = $2", [
+      await client.query("UPDATE users SET role = $1 WHERE id = $2", [
         "captain",
         userId,
       ]);
 
       // Insert new club
-      const result = await pool.query(
+      const clubResult = await client.query(
         `
         INSERT INTO clubs (
           name,
-          email,
-          phone,
           description,
           logo_url,
           created_by,
@@ -85,15 +81,13 @@ router.post(
           created_at,
           updated_at
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8,
-          $9, $10, $11, NOW(), NOW()
+          $1, $2, $3, $4, $5, $6,
+          $7, $8, $9, NOW(), NOW()
         )
         RETURNING id
         `,
         [
           clubName,
-          clubEmail,
-          clubPhone,
           clubDescription,
           logoPath,
           userId,
@@ -105,13 +99,34 @@ router.post(
         ]
       );
 
+      const clubId = clubResult.rows[0].id;
+
+      // Insert club captain as member with role 'captain'
+      await client.query(
+        `
+        INSERT INTO club_members (
+          club_id,
+          user_id,
+          role,
+          status,
+          joined_at
+        ) VALUES ($1, $2, $3, $4, NOW())
+        `,
+        [clubId, userId, "captain", "approved"]
+      );
+
+      await client.query("COMMIT");
+
       res.status(201).json({
         message: "Club registered successfully.",
-        clubId: result.rows[0].id,
+        clubId,
       });
     } catch (err) {
+      await client.query("ROLLBACK");
       console.error("Error registering club:", err);
       res.status(500).json({ error: "Failed to register club" });
+    } finally {
+      client.release();
     }
   }
 );
@@ -691,6 +706,73 @@ router.get("/event-participants/:eventId", async (req, res) => {
   } catch (error) {
     console.error("Error fetching participants:", error);
     res.status(500).json({ error: "Internal server error." });
+  }
+});
+
+// ✅ POST /api/clubs/:clubId/events — Captains create events
+router.post("/:clubId/events", verifyToken, async (req, res) => {
+  const { clubId } = req.params;
+  const { name, type, description, start_date, end_date, handicap, location } =
+    req.body;
+
+  const client = await pool.connect();
+
+  try {
+    // ✅ Check if user is an approved captain/chairman
+    const roleCheck = await client.query(
+      `SELECT role FROM club_members WHERE club_id = $1 AND user_id = $2 AND status = 'approved'`,
+      [clubId, req.user.id]
+    );
+
+    const role = roleCheck.rows[0]?.role;
+    if (!role || !["captain", "chairman"].includes(role)) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    await client.query("BEGIN");
+
+    // ✅ Step 1: Create event
+    const eventResult = await client.query(
+      `INSERT INTO events 
+        (name, type, description, start_date, end_date, handicap, location, club_id, created_by, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW()) 
+       RETURNING *`,
+      [
+        name,
+        type,
+        description,
+        start_date,
+        end_date,
+        handicap === true,
+        location,
+        clubId,
+        req.user.id,
+      ]
+    );
+
+    const event = eventResult.rows[0];
+
+    // ✅ Step 2: Add approved club members to event_participants
+    const membersResult = await client.query(
+      `SELECT user_id FROM club_members WHERE club_id = $1 AND status = 'approved'`,
+      [clubId]
+    );
+
+    for (const { user_id } of membersResult.rows) {
+      await client.query(
+        `INSERT INTO event_participants (event_id, user_id, club_id) VALUES ($1, $2, $3)`,
+        [event.id, user_id, clubId]
+      );
+    }
+
+    await client.query("COMMIT");
+    res.status(201).json(event);
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Club Event Creation Error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  } finally {
+    client.release();
   }
 });
 

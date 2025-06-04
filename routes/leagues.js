@@ -12,6 +12,7 @@ router.get("/active-leagues", async (req, res) => {
         clubs.logo_url,
         CASE
           WHEN CURRENT_DATE < events.start_date THEN 'upcoming'
+          WHEN events.end_date IS NULL AND CURRENT_DATE >= events.start_date THEN 'active'
           WHEN CURRENT_DATE BETWEEN events.start_date AND events.end_date THEN 'active'
           ELSE 'completed'
         END AS status
@@ -20,6 +21,7 @@ router.get("/active-leagues", async (req, res) => {
       WHERE events.type = 'league'
       ORDER BY events.start_date ASC
     `);
+    res.set("Cache-Control", "no-store");
     res.json(result.rows);
   } catch (err) {
     console.error("Error fetching active leagues:", err);

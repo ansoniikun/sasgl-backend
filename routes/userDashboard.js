@@ -11,20 +11,24 @@ router.get("/stats", verifyToken, async (req, res) => {
   try {
     const userStats = await pool.query(
       `
-  SELECT 
-    u.name,
-    u.email,
-    u.role,
-    cs.name AS club_name,
-    COALESCE(us.total_points, 0) AS total_points,
-    COALESCE(us.total_games, 0) AS events_played,  -- use total_games as events_played
-    NULL AS best_position                          -- no column, send null or default
-  FROM users u
-  LEFT JOIN user_stats us ON u.id = us.user_id
-  LEFT JOIN club_members cm ON u.id = cm.user_id AND cm.status = 'approved'
-  LEFT JOIN clubs cs ON cm.club_id = cs.id
-  WHERE u.id = $1
-  `,
+      SELECT 
+        u.name,
+        u.email,
+        u.role,
+        cs.name AS club_name,
+        COALESCE(us.total_points, 0) AS total_points,
+        COALESCE(us.total_games, 0) AS events_played,
+        (
+          SELECT MAX(points)
+          FROM event_user_stats
+          WHERE user_id = $1
+        ) AS best_score
+      FROM users u
+      LEFT JOIN user_stats us ON u.id = us.user_id
+      LEFT JOIN club_members cm ON u.id = cm.user_id AND cm.status = 'approved'
+      LEFT JOIN clubs cs ON cm.club_id = cs.id
+      WHERE u.id = $1
+      `,
       [userId]
     );
 
