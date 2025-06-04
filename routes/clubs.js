@@ -283,26 +283,62 @@ router.patch(
   async (req, res) => {
     const { clubId, userId } = req.params;
 
+    const client = await pool.connect();
     try {
-      const result = await pool.query(
-        `UPDATE club_members SET status = 'approved' WHERE club_id = $1 AND user_id = $2 RETURNING *`,
+      await client.query("BEGIN");
+
+      // 1. Approve the member
+      const result = await client.query(
+        `UPDATE club_members 
+       SET status = 'approved' 
+       WHERE club_id = $1 AND user_id = $2 
+       RETURNING *`,
         [clubId, userId]
       );
 
       if (result.rowCount === 0) {
+        await client.query("ROLLBACK");
         return res.status(404).json({ error: "Member not found" });
       }
 
-      res.json({ success: true, member: result.rows[0] });
+      // 2. Get all events for the club
+      const eventsResult = await client.query(
+        `SELECT id FROM events WHERE club_id = $1`,
+        [clubId]
+      );
+
+      const events = eventsResult.rows;
+
+      // 3. Insert into event_participants for each event
+      for (const event of events) {
+        await client.query(
+          `INSERT INTO event_participants 
+          (event_id, user_id, club_id, score, points, stats, games_played, submitted_by, submitted_at, strokes, putts, greens_in_reg, fairways_hit, notes, birdies)
+         VALUES 
+          ($1, $2, $3, 0, 0, '{}'::jsonb, 0, NULL, NULL, 0, 0, 0, 0, '', 0)`,
+          [event.id, userId, clubId]
+        );
+      }
+
+      await client.query("COMMIT");
+
+      res.json({
+        success: true,
+        member: result.rows[0],
+        addedToEvents: events.length,
+      });
     } catch (error) {
+      await client.query("ROLLBACK");
       console.error("Error approving member:", error);
       res.status(500).json({ error: "Internal server error" });
+    } finally {
+      client.release();
     }
   }
 );
 
 // DELETE /api/clubs/:clubId/members/:userId/reject
-router.delete(
+router.patch(
   "/:clubId/members/:userId/reject",
   verifyToken,
   async (req, res) => {
