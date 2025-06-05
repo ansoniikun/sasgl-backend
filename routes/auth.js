@@ -8,10 +8,10 @@ const router = express.Router();
 // Register route
 router.post("/register", async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, phone_number } = req.body;
 
     // Basic input validation
-    if (!name || !email || !password) {
+    if (!name || !email || !password || !phone_number) {
       return res.status(400).json({ error: "All fields are required" });
     }
 
@@ -31,10 +31,10 @@ router.post("/register", async (req, res) => {
 
     // Insert user
     const newUser = await pool.query(
-      `INSERT INTO users (name, email, password_hash, role, created_at)
-       VALUES ($1, $2, $3, 'player', NOW())
-       RETURNING id, name, email, role`,
-      [name, cleanEmail, hashedPassword]
+      `INSERT INTO users (name, email, password_hash, phone_number, role, created_at)
+       VALUES ($1, $2, $3, $4, 'player', NOW())
+       RETURNING id, name, email, phone_number, role`,
+      [name, cleanEmail, hashedPassword, phone_number]
     );
 
     return res.status(201).json(newUser.rows[0]);

@@ -272,6 +272,7 @@ router.get("/:id/members", verifyToken, async (req, res) => {
         u.id,
         u.name,
         u.email,
+        u.phone_number,
         u.role,
         cm.status,
         cm.joined_at,
