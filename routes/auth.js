@@ -8,11 +8,16 @@ const router = express.Router();
 // Register route
 router.post("/register", async (req, res) => {
   try {
-    const { name, email, password, phone_number } = req.body;
+    const { name, email, password, phone_number, role } = req.body;
 
     // Basic input validation
-    if (!name || !email || !password || !phone_number) {
+    if (!name || !email || !password || !phone_number || !role) {
       return res.status(400).json({ error: "All fields are required" });
+    }
+
+    const allowedRoles = ["player", "captain", "chairman", "admin"];
+    if (!allowedRoles.includes(role)) {
+      return res.status(400).json({ error: "Invalid role selected" });
     }
 
     const cleanEmail = email.trim().toLowerCase();
@@ -32,9 +37,9 @@ router.post("/register", async (req, res) => {
     // Insert user
     const newUser = await pool.query(
       `INSERT INTO users (name, email, password_hash, phone_number, role, created_at)
-       VALUES ($1, $2, $3, $4, 'player', NOW())
+       VALUES ($1, $2, $3, $4, $5, NOW())
        RETURNING id, name, email, phone_number, role`,
-      [name, cleanEmail, hashedPassword, phone_number]
+      [name, cleanEmail, hashedPassword, phone_number, role]
     );
 
     return res.status(201).json(newUser.rows[0]);

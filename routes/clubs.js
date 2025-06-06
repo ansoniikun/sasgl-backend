@@ -60,10 +60,10 @@ router.post(
       }
 
       // Promote user to captain
-      await client.query("UPDATE users SET role = $1 WHERE id = $2", [
-        "captain",
-        userId,
-      ]);
+      // await client.query("UPDATE users SET role = $1 WHERE id = $2", [
+      //   "captain",
+      //   userId,
+      // ]);
 
       // Insert new club
       const clubResult = await client.query(
@@ -92,7 +92,7 @@ router.post(
           logoPath,
           userId,
           isPrivateClub === "true" || isPrivateClub === true,
-          false, // approved
+          true, // approved
           user.name,
           user.email,
           captainContactNo,
