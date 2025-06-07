@@ -43,4 +43,53 @@ router.get("/stats", verifyToken, async (req, res) => {
   }
 });
 
+// PUT /users/edit — update user profile
+router.put("/edit", verifyToken, async (req, res) => {
+  const userId = req.user.id;
+  const { name, email, password, phone_number } = req.body;
+
+  try {
+    let updateFields = [];
+    let values = [];
+    let index = 1;
+
+    if (name) {
+      updateFields.push(`name = $${index++}`);
+      values.push(name);
+    }
+    if (email) {
+      updateFields.push(`email = $${index++}`);
+      values.push(email);
+    }
+    if (phone_number) {
+      updateFields.push(`phone_number = $${index++}`);
+      values.push(phone_number);
+    }
+    if (password) {
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash(password, salt);
+      updateFields.push(`password_hash = $${index++}`);
+      values.push(hashedPassword);
+    }
+
+    if (updateFields.length === 0) {
+      return res.status(400).json({ error: "No fields to update" });
+    }
+
+    values.push(userId);
+    const query = `
+      UPDATE users
+      SET ${updateFields.join(", ")}, updated_at = NOW()
+      WHERE id = $${index}
+      RETURNING id, name, email, phone_number, role, created_at, updated_at
+    `;
+
+    const result = await pool.query(query, values);
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("Error updating user profile:", err);
+    res.status(500).json({ error: "Server error", details: err.message });
+  }
+});
+
 export default router;
