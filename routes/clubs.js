@@ -433,10 +433,10 @@ router.get("/:id/events", async (req, res) => {
 router.patch("/:id", verifyToken, async (req, res) => {
   const clubId = req.params.id;
   const userId = req.user.id;
-  const { name, email, phone, description, is_private } = req.body;
+  const { name, description, logo } = req.body;
 
   try {
-    // Ensure user is the captain of the club
+    // Ensure user is the captain or creator of the club
     const { rows } = await pool.query(
       `SELECT * FROM clubs WHERE id = $1 AND created_by = $2`,
       [clubId, userId]
@@ -448,9 +448,12 @@ router.patch("/:id", verifyToken, async (req, res) => {
 
     await pool.query(
       `UPDATE clubs
-       SET name = $1, email = $2, phone = $3, description = $4, is_private = $5, updated_at = NOW()
-       WHERE id = $6`,
-      [name, email, phone, description, is_private === "true", clubId]
+       SET name = $1,
+           description = $2,
+           logo_url = $3,
+           updated_at = NOW()
+       WHERE id = $4`,
+      [name, description, logo, clubId]
     );
 
     res.json({ message: "Club updated successfully" });
