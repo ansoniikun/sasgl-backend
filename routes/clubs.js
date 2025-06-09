@@ -1,135 +1,113 @@
 import express from "express";
 import { verifyToken, requireCaptain } from "../middleware/auth.js";
 import pool from "../db/index.js";
-import multer from "multer";
-import path from "path";
-
 const router = express.Router();
 
-// Multer setup for logo uploads
-// Upload config
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, "uploads/logos");
-  },
-  filename: function (req, file, cb) {
-    cb(null, Date.now() + path.extname(file.originalname));
-  },
-});
-const upload = multer({ storage });
+router.post("/register", verifyToken, async (req, res) => {
+  const {
+    clubName,
+    clubDescription,
+    captainContactNo,
+    isPrivateClub,
+    clubLogoUrl,
+  } = req.body;
 
-router.post(
-  "/register",
-  verifyToken,
-  upload.single("clubLogo"),
-  async (req, res) => {
-    const { clubName, clubDescription, captainContactNo, isPrivateClub } =
-      req.body;
+  const userId = req.user.id;
 
-    const userId = req.user.id;
-    const logoPath = req.file ? `/uploads/logos/${req.file.filename}` : null;
+  const client = await pool.connect();
 
-    const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
 
-    try {
-      await client.query("BEGIN");
+    const userResult = await client.query(
+      "SELECT name, email FROM users WHERE id = $1",
+      [userId]
+    );
 
-      const userResult = await client.query(
-        "SELECT name, email FROM users WHERE id = $1",
-        [userId]
-      );
+    const user = userResult.rows[0];
 
-      const user = userResult.rows[0];
-
-      if (!user) {
-        await client.query("ROLLBACK");
-        return res.status(404).json({ message: "User not found." });
-      }
-
-      // Check if user already created a club
-      const existingClub = await client.query(
-        "SELECT id FROM clubs WHERE created_by = $1",
-        [userId]
-      );
-
-      if (existingClub.rows.length > 0) {
-        await client.query("ROLLBACK");
-        return res.status(400).json({
-          message: "Cannot create club. You already have a club.",
-        });
-      }
-
-      // Promote user to captain
-      // await client.query("UPDATE users SET role = $1 WHERE id = $2", [
-      //   "captain",
-      //   userId,
-      // ]);
-
-      // Insert new club
-      const clubResult = await client.query(
-        `
-        INSERT INTO clubs (
-          name,
-          description,
-          logo_url,
-          created_by,
-          is_private,
-          approved,
-          captain_name,
-          captain_email,
-          captain_contact_no,
-          created_at,
-          updated_at
-        ) VALUES (
-          $1, $2, $3, $4, $5, $6,
-          $7, $8, $9, NOW(), NOW()
-        )
-        RETURNING id
-        `,
-        [
-          clubName,
-          clubDescription,
-          logoPath,
-          userId,
-          isPrivateClub === "true" || isPrivateClub === true,
-          true, // approved
-          user.name,
-          user.email,
-          captainContactNo,
-        ]
-      );
-
-      const clubId = clubResult.rows[0].id;
-
-      // Insert club captain as member with role 'captain'
-      await client.query(
-        `
-        INSERT INTO club_members (
-          club_id,
-          user_id,
-          role,
-          status,
-          joined_at
-        ) VALUES ($1, $2, $3, $4, NOW())
-        `,
-        [clubId, userId, "captain", "approved"]
-      );
-
-      await client.query("COMMIT");
-
-      res.status(201).json({
-        message: "Club registered successfully.",
-        clubId,
-      });
-    } catch (err) {
+    if (!user) {
       await client.query("ROLLBACK");
-      console.error("Error registering club:", err);
-      res.status(500).json({ error: "Failed to register club" });
-    } finally {
-      client.release();
+      return res.status(404).json({ message: "User not found." });
     }
+
+    // Check if user already created a club
+    const existingClub = await client.query(
+      "SELECT id FROM clubs WHERE created_by = $1",
+      [userId]
+    );
+
+    if (existingClub.rows.length > 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        message: "Cannot create club. You already have a club.",
+      });
+    }
+
+    // Insert new club
+    const clubResult = await client.query(
+      `
+      INSERT INTO clubs (
+        name,
+        description,
+        logo_url,
+        created_by,
+        is_private,
+        approved,
+        captain_name,
+        captain_email,
+        captain_contact_no,
+        created_at,
+        updated_at
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6,
+        $7, $8, $9, NOW(), NOW()
+      )
+      RETURNING id
+      `,
+      [
+        clubName,
+        clubDescription,
+        clubLogoUrl || null,
+        userId,
+        isPrivateClub === "true" || isPrivateClub === true,
+        true,
+        user.name,
+        user.email,
+        captainContactNo,
+      ]
+    );
+
+    const clubId = clubResult.rows[0].id;
+
+    // Insert captain as member
+    await client.query(
+      `
+      INSERT INTO club_members (
+        club_id,
+        user_id,
+        role,
+        status,
+        joined_at
+      ) VALUES ($1, $2, $3, $4, NOW())
+      `,
+      [clubId, userId, "captain", "approved"]
+    );
+
+    await client.query("COMMIT");
+
+    res.status(201).json({
+      message: "Club registered successfully.",
+      clubId,
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("Error registering club:", err);
+    res.status(500).json({ error: "Failed to register club" });
+  } finally {
+    client.release();
   }
-);
+});
 
 // --- GET all approved clubs ---
 router.get("/all", async (req, res) => {
@@ -244,7 +222,6 @@ router.get("/user-clubs", verifyToken, async (req, res) => {
 });
 
 // GET /api/clubs/:id/members
-
 router.get("/:id/members", verifyToken, async (req, res) => {
   const userId = req.user.id;
   const clubId = req.params.id;
@@ -266,7 +243,7 @@ router.get("/:id/members", verifyToken, async (req, res) => {
         .json({ error: "Access denied: You are not a member of this club" });
     }
 
-    // Fetch club members with total_points from user_stats
+    // Fetch club members with total_points from user_stats and profile_picture from users
     const fetchMembersQuery = `
       SELECT 
         u.id,
@@ -274,6 +251,7 @@ router.get("/:id/members", verifyToken, async (req, res) => {
         u.email,
         u.phone_number,
         u.role,
+        u.profile_picture,
         cm.status,
         cm.joined_at,
         COALESCE(us.total_points, 0) AS score

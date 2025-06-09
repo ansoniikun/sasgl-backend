@@ -46,7 +46,7 @@ router.get("/stats", verifyToken, async (req, res) => {
 // PUT /users/edit — update user profile
 router.put("/edit", verifyToken, async (req, res) => {
   const userId = req.user.id;
-  const { name, email, password, phone_number } = req.body;
+  const { name, email, password, phone_number, profile_picture } = req.body;
 
   try {
     let updateFields = [];
@@ -71,6 +71,10 @@ router.put("/edit", verifyToken, async (req, res) => {
       updateFields.push(`password_hash = $${index++}`);
       values.push(hashedPassword);
     }
+    if (profile_picture) {
+      updateFields.push(`profile_picture = $${index++}`);
+      values.push(profile_picture);
+    }
 
     if (updateFields.length === 0) {
       return res.status(400).json({ error: "No fields to update" });
@@ -81,7 +85,7 @@ router.put("/edit", verifyToken, async (req, res) => {
       UPDATE users
       SET ${updateFields.join(", ")}, updated_at = NOW()
       WHERE id = $${index}
-      RETURNING id, name, email, phone_number, role, created_at, updated_at
+      RETURNING id, name, email, phone_number, profile_picture, role, created_at, updated_at
     `;
 
     const result = await pool.query(query, values);
