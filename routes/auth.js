@@ -94,4 +94,76 @@ router.post("/login", async (req, res) => {
   }
 });
 
+router.post("/google-register", async (req, res) => {
+  const { name, email, profile_picture, role } = req.body;
+
+  try {
+    // Check if user already exists
+    const existingUser = await pool.query(
+      "SELECT * FROM users WHERE email = $1",
+      [email]
+    );
+
+    let user;
+    if (existingUser.rows.length === 0) {
+      const result = await pool.query(
+        `INSERT INTO users (name, email, role, profile_picture, auth_provider, created_at, updated_at)
+   VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+   RETURNING *`,
+        [name, email, role || "player", profile_picture, "google"]
+      );
+
+      user = result.rows[0];
+    } else {
+      user = existingUser.rows[0];
+    }
+
+    res.status(200).json({ user });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// Google Login Route
+router.post("/google-login", async (req, res) => {
+  const { email } = req.body;
+
+  try {
+    const cleanEmail = email.trim().toLowerCase();
+
+    const result = await pool.query(
+      "SELECT id, name, email, role FROM users WHERE email = $1 AND auth_provider = 'google'",
+      [cleanEmail]
+    );
+
+    const user = result.rows[0];
+
+    if (!user) {
+      return res.status(401).json({ error: "User not registered with Google" });
+    }
+
+    const token = jwt.sign(
+      { id: user.id, email: user.email, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: "1d" }
+    );
+
+    return res.json({
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      },
+    });
+  } catch (err) {
+    console.error("GOOGLE LOGIN ERROR:", err);
+    return res
+      .status(500)
+      .json({ error: "Google login failed", detail: err.message });
+  }
+});
+
 export default router;
