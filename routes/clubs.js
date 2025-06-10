@@ -284,7 +284,7 @@ router.patch(
       // 1. Approve the member
       const result = await client.query(
         `UPDATE club_members 
-       SET status = 'approved' 
+       SET status = 'approved', role = 'player' 
        WHERE club_id = $1 AND user_id = $2 
        RETURNING *`,
         [clubId, userId]
@@ -488,7 +488,6 @@ router.post("/submit-stats", verifyToken, requireCaptain, async (req, res) => {
   const {
     eventId,
     userId,
-    playerScore,
     points = 0,
     birdies = 0,
     strokes = 0,
@@ -501,7 +500,7 @@ router.post("/submit-stats", verifyToken, requireCaptain, async (req, res) => {
   const submittedBy = req.user.id;
 
   // Validate required fields
-  if (!eventId || !userId || typeof playerScore !== "number") {
+  if (!eventId || !userId) {
     return res
       .status(400)
       .json({ error: "Missing or invalid required fields" });
@@ -515,12 +514,11 @@ router.post("/submit-stats", verifyToken, requireCaptain, async (req, res) => {
     await client.query(
       `
         INSERT INTO event_participants (
-          event_id, user_id, score, points, birdies, strokes, putts,
+          event_id, user_id, points, birdies, strokes, putts,
           greens_in_reg, fairways_hit, notes, submitted_by, submitted_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
         ON CONFLICT (event_id, user_id)
         DO UPDATE SET
-          score = EXCLUDED.score,
           points = EXCLUDED.points,
           birdies = EXCLUDED.birdies,
           strokes = EXCLUDED.strokes,
@@ -534,7 +532,6 @@ router.post("/submit-stats", verifyToken, requireCaptain, async (req, res) => {
       [
         eventId,
         userId,
-        playerScore,
         points,
         birdies,
         strokes,
@@ -691,7 +688,7 @@ router.get("/event-participants/:eventId", async (req, res) => {
   }
 });
 
-// ✅ POST /api/clubs/:clubId/events — Captains create events
+// POST /api/clubs/:clubId/events — Captains create events
 router.post("/:clubId/events", verifyToken, async (req, res) => {
   const { clubId } = req.params;
   const { name, type, description, start_date, end_date, handicap, location } =
@@ -700,7 +697,7 @@ router.post("/:clubId/events", verifyToken, async (req, res) => {
   const client = await pool.connect();
 
   try {
-    // ✅ Check if user is an approved captain/chairman
+    // Check if user is an approved captain/chairman
     const roleCheck = await client.query(
       `SELECT role FROM club_members WHERE club_id = $1 AND user_id = $2 AND status = 'approved'`,
       [clubId, req.user.id]
@@ -713,7 +710,7 @@ router.post("/:clubId/events", verifyToken, async (req, res) => {
 
     await client.query("BEGIN");
 
-    // ✅ Step 1: Create event
+    // Step 1: Create event
     const eventResult = await client.query(
       `INSERT INTO events 
         (name, type, description, start_date, end_date, handicap, location, club_id, created_by, created_at, updated_at)
@@ -734,7 +731,7 @@ router.post("/:clubId/events", verifyToken, async (req, res) => {
 
     const event = eventResult.rows[0];
 
-    // ✅ Step 2: Add approved club members to event_participants
+    // Step 2: Add approved club members to event_participants
     const membersResult = await client.query(
       `SELECT user_id FROM club_members WHERE club_id = $1 AND status = 'approved'`,
       [clubId]
@@ -752,6 +749,57 @@ router.post("/:clubId/events", verifyToken, async (req, res) => {
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("Club Event Creation Error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  } finally {
+    client.release();
+  }
+});
+
+// PUT /api/clubs/events/:id — Edit event
+router.put("/events/:id", verifyToken, async (req, res) => {
+  const { id } = req.params;
+  const { name, type, description, start_date } = req.body;
+
+  const client = await pool.connect();
+
+  try {
+    // Get event to check club and creator
+    const eventCheck = await client.query(
+      "SELECT club_id FROM events WHERE id = $1",
+      [id]
+    );
+    if (eventCheck.rows.length === 0) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+
+    const { club_id } = eventCheck.rows[0];
+
+    // Check role
+    const roleRes = await client.query(
+      `SELECT role FROM club_members 
+       WHERE club_id = $1 AND user_id = $2 AND status = 'approved'`,
+      [club_id, req.user.id]
+    );
+
+    const role = roleRes.rows[0]?.role;
+    if (!role || !["captain", "chairman"].includes(role)) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    const updateRes = await client.query(
+      `UPDATE events SET 
+        name = $1,
+        type = $2,
+        description = $3,
+        start_date = $4,
+        updated_at = NOW()
+       WHERE id = $5 RETURNING *`,
+      [name, type, description, start_date, id]
+    );
+
+    res.status(200).json(updateRes.rows[0]);
+  } catch (err) {
+    console.error("Edit Event Error:", err);
     res.status(500).json({ error: "Internal server error" });
   } finally {
     client.release();
