@@ -9,7 +9,27 @@ import activeUsers from "./routes/users.js";
 import eventsRoutes from "./routes/events.js";
 
 const app = express();
-app.use(cors());
+
+// CORS configuration
+const allowedOrigins = [
+  "https://sasgl.co.za",
+  "https://www.sasgl.co.za",
+  "https://sasgl.vercel.app",
+];
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    credentials: true, // if you use cookies/auth headers
+  })
+);
+
 app.use(express.json());
 
 app.use("/api/auth", authRoutes);
