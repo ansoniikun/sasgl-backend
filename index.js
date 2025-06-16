@@ -15,6 +15,7 @@ const allowedOrigins = [
   "https://sasgl.co.za",
   "https://www.sasgl.co.za",
   "https://sasgl.vercel.app",
+  "http://localhost:3000",
 ];
 
 app.use(

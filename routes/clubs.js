@@ -445,41 +445,44 @@ router.get("/league/:clubId", async (req, res) => {
   const clubId = req.params.clubId;
 
   try {
-    // Get latest league event for this club
-    const leagueEvent = await pool.query(
-      "SELECT * FROM events WHERE club_id = $1 AND type = 'league' ORDER BY created_at DESC LIMIT 1",
+    const result = await pool.query(
+      `
+      WITH ranked_scores AS (
+        SELECT 
+          ep.user_id,
+          u.name,
+          ep.points,
+          ROW_NUMBER() OVER (PARTITION BY ep.user_id ORDER BY ep.points DESC) AS rank
+        FROM event_participants ep
+        JOIN users u ON u.id = ep.user_id
+        WHERE ep.club_id = $1
+      )
+      SELECT 
+        user_id,
+        name,
+        ARRAY_AGG(points ORDER BY rank) AS scores
+      FROM ranked_scores
+      WHERE rank <= 4
+      GROUP BY user_id, name
+      ORDER BY SUM(points) DESC
+      `,
       [clubId]
     );
 
-    if (leagueEvent.rowCount === 0) {
-      return res.status(404).json({ error: "No league found for this club" });
-    }
-
-    const leagueId = leagueEvent.rows[0].id;
-
-    const leaderboard = await pool.query(
-      `
-      SELECT 
-        eus.user_id,
-        u.name,
-        eus.games_played,
-        eus.points,
-        eus.birdies,
-        eus.avg_points
-      FROM event_user_stats eus
-      JOIN users u ON eus.user_id = u.id
-      WHERE eus.event_id = $1
-      ORDER BY eus.points DESC
-    `,
-      [leagueId]
-    );
-
-    res.json({
-      league: leagueEvent.rows[0],
-      leaderboard: leaderboard.rows,
+    const leaderboard = result.rows.map((row) => {
+      const scores = row.scores;
+      const total = scores.reduce((sum, p) => sum + p, 0);
+      return {
+        user_id: row.user_id,
+        name: row.name,
+        scores,
+        total,
+      };
     });
+
+    res.json({ leaderboard });
   } catch (err) {
-    console.error("Error fetching league details:", err);
+    console.error("Error fetching league leaderboard:", err);
     res.status(500).json({ error: "Internal server error" });
   }
 });
