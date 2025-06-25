@@ -10,9 +10,11 @@ router.post("/register", async (req, res) => {
   try {
     const { name, email, password, phone_number, role } = req.body;
 
-    // Basic input validation
-    if (!name || !email || !password || !phone_number || !role) {
-      return res.status(400).json({ error: "All fields are required" });
+    // Input validation: phone_number required, email optional
+    if (!name || !password || !phone_number || !role) {
+      return res
+        .status(400)
+        .json({ error: "Name, password, phone number, and role are required" });
     }
 
     const allowedRoles = ["player", "captain", "chairman", "admin"];
@@ -20,15 +22,28 @@ router.post("/register", async (req, res) => {
       return res.status(400).json({ error: "Invalid role selected" });
     }
 
-    const cleanEmail = email.trim().toLowerCase();
+    const cleanEmail = email ? email.trim().toLowerCase() : null;
 
-    // Check if user already exists
-    const userExists = await pool.query(
-      "SELECT 1 FROM users WHERE email = $1",
-      [cleanEmail]
+    // Optional email uniqueness check
+    if (cleanEmail) {
+      const emailExists = await pool.query(
+        "SELECT 1 FROM users WHERE email = $1",
+        [cleanEmail]
+      );
+      if (emailExists.rows.length > 0) {
+        return res.status(409).json({ error: "Email is already registered" });
+      }
+    }
+
+    // Check for existing phone number
+    const phoneExists = await pool.query(
+      "SELECT 1 FROM users WHERE phone_number = $1",
+      [phone_number]
     );
-    if (userExists.rows.length > 0) {
-      return res.status(409).json({ error: "User already exists" });
+    if (phoneExists.rows.length > 0) {
+      return res
+        .status(409)
+        .json({ error: "Phone number is already registered" });
     }
 
     // Hash password
@@ -51,16 +66,20 @@ router.post("/register", async (req, res) => {
   }
 });
 
-// Login route
+// Login route using phone number
 router.post("/login", async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { phone_number, password } = req.body;
 
-    const cleanEmail = email.trim().toLowerCase();
+    if (!phone_number || !password) {
+      return res
+        .status(400)
+        .json({ error: "Phone number and password are required" });
+    }
 
     const result = await pool.query(
-      "SELECT id, name, email, password_hash, role FROM users WHERE email = $1",
-      [cleanEmail]
+      "SELECT id, name, email, phone_number, password_hash, role FROM users WHERE phone_number = $1",
+      [phone_number]
     );
 
     const user = result.rows[0];
@@ -74,7 +93,7 @@ router.post("/login", async (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role },
+      { id: user.id, phone_number: user.phone_number, role: user.role },
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
@@ -84,6 +103,7 @@ router.post("/login", async (req, res) => {
       user: {
         id: user.id,
         name: user.name,
+        phone_number: user.phone_number,
         email: user.email,
         role: user.role,
       },
