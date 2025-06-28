@@ -809,4 +809,44 @@ router.put("/events/:id", verifyToken, async (req, res) => {
   }
 });
 
+// DELETE /api/clubs/events/:eventId
+router.delete("/events/:eventId", verifyToken, async (req, res) => {
+  const { eventId } = req.params;
+  const userId = req.user.id;
+
+  try {
+    // Check if the user created the event or is captain
+    const eventCheck = await pool.query(
+      `SELECT club_id FROM events WHERE id = $1`,
+      [eventId]
+    );
+
+    if (eventCheck.rows.length === 0) {
+      return res.status(404).json({ error: "Event not found" });
+    }
+
+    const { club_id } = eventCheck.rows[0];
+
+    const roleRes = await pool.query(
+      `SELECT role FROM club_members 
+       WHERE club_id = $1 AND user_id = $2 AND status = 'approved'`,
+      [club_id, userId]
+    );
+
+    const role = roleRes.rows[0]?.role;
+
+    if (!["captain", "chairman"].includes(role)) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    await pool.query(`DELETE FROM events WHERE id = $1`, [eventId]);
+
+    res.status(200).json({ message: "Event deleted successfully." });
+  } catch (err) {
+    console.error("Error deleting event:", err);
+    res.status(500).json({ error: "Failed to delete event" });
+  }
+});
+
+
 export default router;
