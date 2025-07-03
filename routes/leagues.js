@@ -4,11 +4,32 @@ import { verifyToken } from "../middleware/auth.js";
 
 const router = express.Router();
 
+// GET /api/leagues/active-leagues?page=1&per_page=6
 router.get("/active-leagues", verifyToken, async (req, res) => {
   const userId = req.user?.id;
+  const page = parseInt(req.query.page) || 1;
+  const perPage = parseInt(req.query.per_page) || 6;
+  const offset = (page - 1) * perPage;
 
   try {
-    const result = await pool.query(`
+    // Total count of leagues user is approved for
+    const countResult = await pool.query(
+      `
+      SELECT COUNT(*) AS total
+      FROM events
+      JOIN clubs ON events.club_id = clubs.id
+      JOIN club_members ON club_members.club_id = clubs.id
+      WHERE events.type = 'league'
+        AND club_members.user_id = $1
+        AND club_members.status = 'approved'
+      `,
+      [userId]
+    );
+    const totalCount = parseInt(countResult.rows[0]?.total || "0", 10);
+
+    // Fetch paginated approved league events
+    const leagueResult = await pool.query(
+      `
       SELECT 
         events.*,
         clubs.logo_url,
@@ -23,11 +44,17 @@ router.get("/active-leagues", verifyToken, async (req, res) => {
       JOIN club_members ON club_members.club_id = clubs.id
       WHERE events.type = 'league'
         AND club_members.user_id = $1
+        AND club_members.status = 'approved'
       ORDER BY events.start_date ASC
-    `, [userId]);
+      LIMIT $2 OFFSET $3
+      `,
+      [userId, perPage, offset]
+    );
 
-    res.set("Cache-Control", "no-store");
-    res.json(result.rows);
+    return res.json({
+      data: leagueResult.rows,
+      total_count: totalCount,
+    });
   } catch (err) {
     console.error("Error fetching active leagues:", err);
     res.status(500).json({ error: "Internal server error" });

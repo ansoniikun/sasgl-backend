@@ -152,6 +152,28 @@ router.post("/request", verifyToken, async (req, res) => {
   }
 });
 
+router.get("/myclubs", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const result = await pool.query(
+      `
+      SELECT DISTINCT c.id, c.name
+      FROM club_members cm
+      JOIN clubs c ON cm.club_id = c.id
+      WHERE cm.user_id = $1 AND cm.status = 'approved'
+      `,
+      [userId]
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Failed to fetch user clubs:", err);
+    res.status(500).json({ error: "Failed to fetch clubs" });
+  }
+});
+
+
 router.get("/myclub", verifyToken, async (req, res) => {
   try {
     const userId = req.user.id;
