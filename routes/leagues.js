@@ -4,7 +4,9 @@ import { verifyToken } from "../middleware/auth.js";
 
 const router = express.Router();
 
-router.get("/active-leagues", async (req, res) => {
+router.get("/active-leagues", verifyToken, async (req, res) => {
+  const userId = req.user?.id;
+
   try {
     const result = await pool.query(`
       SELECT 
@@ -17,10 +19,13 @@ router.get("/active-leagues", async (req, res) => {
           ELSE 'completed'
         END AS status
       FROM events
-      LEFT JOIN clubs ON events.club_id = clubs.id
+      JOIN clubs ON events.club_id = clubs.id
+      JOIN club_members ON club_members.club_id = clubs.id
       WHERE events.type = 'league'
+        AND club_members.user_id = $1
       ORDER BY events.start_date ASC
-    `);
+    `, [userId]);
+
     res.set("Cache-Control", "no-store");
     res.json(result.rows);
   } catch (err) {
