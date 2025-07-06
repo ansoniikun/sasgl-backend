@@ -764,9 +764,14 @@ router.post("/:clubId/events", verifyToken, async (req, res) => {
 
     for (const { user_id } of membersResult.rows) {
       await client.query(
-        `INSERT INTO event_participants (event_id, user_id, club_id) VALUES ($1, $2, $3)`,
+        `INSERT INTO event_participants (
+          event_id, user_id, club_id, points, stats, games_played, submitted_by, 
+          submitted_at, strokes, putts, greens_in_reg, fairways_hit, notes, birdies
+        ) VALUES (
+          $1, $2, $3, 0, '{}'::jsonb, 0, NULL, NULL, 0, 0, 0, 0, '', 0
+        )`,
         [event.id, user_id, clubId]
-      );
+      );      
     }
 
     await client.query("COMMIT");
