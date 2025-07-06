@@ -329,11 +329,11 @@ router.patch(
       for (const event of events) {
         await client.query(
           `INSERT INTO event_participants 
-          (event_id, user_id, club_id, score, points, stats, games_played, submitted_by, submitted_at, strokes, putts, greens_in_reg, fairways_hit, notes, birdies)
-         VALUES 
-          ($1, $2, $3, 0, 0, '{}'::jsonb, 0, NULL, NULL, 0, 0, 0, 0, '', 0)`,
+            (event_id, user_id, club_id, points, stats, games_played, submitted_by, submitted_at, strokes, putts, greens_in_reg, fairways_hit, notes, birdies)
+           VALUES 
+            ($1, $2, $3, 0, '{}'::jsonb, 0, NULL, NULL, 0, 0, 0, 0, '', 0)`,
           [event.id, userId, clubId]
-        );
+        );        
       }
 
       await client.query("COMMIT");
