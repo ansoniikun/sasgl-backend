@@ -210,6 +210,28 @@ router.get("/myclub", verifyToken, async (req, res) => {
   }
 });
 
+// GET /api/clubs/:id
+router.get("/:id", verifyToken, async (req, res) => {
+  const clubId = req.params.id;
+
+  try {
+    const result = await pool.query(
+      `SELECT * FROM clubs WHERE id = $1`,
+      [clubId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Club not found" });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("Failed to fetch club by ID:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+
 // GET /api/clubs
 router.get("/", async (req, res) => {
   try {
