@@ -173,7 +173,6 @@ router.get("/myclubs", verifyToken, async (req, res) => {
   }
 });
 
-
 router.get("/myclub", verifyToken, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -215,10 +214,9 @@ router.get("/:id", verifyToken, async (req, res) => {
   const clubId = req.params.id;
 
   try {
-    const result = await pool.query(
-      `SELECT * FROM clubs WHERE id = $1`,
-      [clubId]
-    );
+    const result = await pool.query(`SELECT * FROM clubs WHERE id = $1`, [
+      clubId,
+    ]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: "Club not found" });
@@ -230,7 +228,6 @@ router.get("/:id", verifyToken, async (req, res) => {
     res.status(500).json({ error: "Internal server error" });
   }
 });
-
 
 // GET /api/clubs
 router.get("/", async (req, res) => {
@@ -355,7 +352,7 @@ router.patch(
            VALUES 
             ($1, $2, $3, 0, '{}'::jsonb, 0, NULL, NULL, 0, 0, 0, 0, '', 0)`,
           [event.id, userId, clubId]
-        );        
+        );
       }
 
       await client.query("COMMIT");
@@ -452,10 +449,12 @@ router.get("/:id/events", async (req, res) => {
   }
 });
 
+//Update club edit
 router.patch("/:id", verifyToken, async (req, res) => {
   const clubId = req.params.id;
   const userId = req.user.id;
-  const { name, description, logo } = req.body;
+  const { name, description, logo, home_estate, country, established_year } =
+    req.body;
 
   try {
     // Ensure user is the captain or creator of the club
@@ -473,9 +472,12 @@ router.patch("/:id", verifyToken, async (req, res) => {
        SET name = $1,
            description = $2,
            logo_url = $3,
+           home_estate = $4,
+           country = $5,
+           established_year = $6,
            updated_at = NOW()
-       WHERE id = $4`,
-      [name, description, logo, clubId]
+       WHERE id = $7`,
+      [name, description, logo, home_estate, country, established_year, clubId]
     );
 
     res.json({ message: "Club updated successfully" });
@@ -793,7 +795,7 @@ router.post("/:clubId/events", verifyToken, async (req, res) => {
           $1, $2, $3, 0, '{}'::jsonb, 0, NULL, NULL, 0, 0, 0, 0, '', 0
         )`,
         [event.id, user_id, clubId]
-      );      
+      );
     }
 
     await client.query("COMMIT");
@@ -896,6 +898,5 @@ router.delete("/events/:eventId", verifyToken, async (req, res) => {
     res.status(500).json({ error: "Failed to delete event" });
   }
 });
-
 
 export default router;
