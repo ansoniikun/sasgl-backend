@@ -209,6 +209,25 @@ router.get("/myclub", verifyToken, async (req, res) => {
   }
 });
 
+// GET /api/clubs/user-requests
+router.get("/user-requests", verifyToken, async (req, res) => {
+  const userId = req.user.id;
+
+  try {
+    const result = await pool.query(
+      `SELECT club_id, status
+       FROM club_members
+       WHERE user_id = $1`,
+      [userId]
+    );
+
+    res.json(result.rows); // [{ club_id: 1, status: 'pending' }, ...]
+  } catch (err) {
+    console.error("Error fetching user club requests:", err);
+    res.status(500).json({ error: "Failed to fetch join requests" });
+  }
+});
+
 // GET /api/clubs/:id
 router.get("/:id", verifyToken, async (req, res) => {
   const clubId = req.params.id;
@@ -413,25 +432,6 @@ router.patch(
     }
   }
 );
-
-// GET /api/clubs/user-requests
-router.get("/user-requests", verifyToken, async (req, res) => {
-  const userId = req.user.id;
-
-  try {
-    const result = await pool.query(
-      `SELECT club_id, status
-       FROM club_members
-       WHERE user_id = $1`,
-      [userId]
-    );
-
-    res.json(result.rows); // [{ club_id: 1, status: 'pending' }, ...]
-  } catch (err) {
-    console.error("Error fetching user club requests:", err);
-    res.status(500).json({ error: "Failed to fetch join requests" });
-  }
-});
 
 // GET /api/clubs/:id/events
 router.get("/:id/events", async (req, res) => {
