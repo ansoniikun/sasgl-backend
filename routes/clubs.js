@@ -433,6 +433,64 @@ router.patch(
   }
 );
 
+// DELETE /api/clubs/:clubId/members/:userId/remove
+router.delete(
+  "/:clubId/members/:userId/remove",
+  verifyToken,
+  async (req, res) => {
+    const { clubId, userId } = req.params;
+    const currentUserId = req.user.id;
+
+    const client = await pool.connect();
+    try {
+      // Check if current user is captain or chairman of the club
+      const roleCheck = await client.query(
+        `SELECT role FROM club_members WHERE club_id = $1 AND user_id = $2 AND status = 'approved'`,
+        [clubId, currentUserId]
+      );
+
+      if (roleCheck.rows.length === 0) {
+        return res.status(403).json({ error: "Unauthorized" });
+      }
+
+      const role = roleCheck.rows[0].role;
+      if (role !== "captain" && role !== "chairman") {
+        return res
+          .status(403)
+          .json({ error: "Only captain or chairman can remove members" });
+      }
+
+      await client.query("BEGIN");
+
+      // Remove from club_members
+      const result = await client.query(
+        `DELETE FROM club_members WHERE club_id = $1 AND user_id = $2 AND status = 'approved' RETURNING *`,
+        [clubId, userId]
+      );
+
+      if (result.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "Approved member not found" });
+      }
+
+      // Also remove from event_participants
+      await client.query(
+        `DELETE FROM event_participants WHERE club_id = $1 AND user_id = $2`,
+        [clubId, userId]
+      );
+
+      await client.query("COMMIT");
+      res.json({ success: true, message: "Member removed successfully" });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      console.error("Error removing member:", err);
+      res.status(500).json({ error: "Internal server error" });
+    } finally {
+      client.release();
+    }
+  }
+);
+
 // GET /api/clubs/:id/events
 router.get("/:id/events", async (req, res) => {
   const { id: clubId } = req.params;
