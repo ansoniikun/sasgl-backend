@@ -566,7 +566,7 @@ router.get("/league/:clubId", async (req, res) => {
         name,
         ARRAY_AGG(points ORDER BY rank) AS scores
       FROM ranked_scores
-      WHERE rank <= 4
+      WHERE rank <= 12
       GROUP BY user_id, name
       ORDER BY SUM(points) DESC
       `,
