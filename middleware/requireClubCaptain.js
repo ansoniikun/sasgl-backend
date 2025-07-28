@@ -2,7 +2,9 @@ import pool from "../db/index.js";
 
 const requireClubCaptain = async (req, res, next) => {
   const userId = req.user.id;
-  const { event_id } = req.body;
+  const { eventId } = req.body;
+  console.log("Checking club captain for userId:", userId, "eventId:", eventId);
+  console.log("Captain query result:", result.rows);
 
   try {
     const result = await pool.query(
@@ -11,7 +13,7 @@ const requireClubCaptain = async (req, res, next) => {
       JOIN events e ON e.club_id = cm.club_id
       WHERE cm.user_id = $1 AND cm.role IN ('captain', 'chairman') AND e.id = $2
       `,
-      [userId, event_id]
+      [userId, eventId]
     );
 
     if (result.rows.length === 0) {

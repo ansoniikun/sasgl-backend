@@ -591,7 +591,7 @@ router.get("/league/:clubId", async (req, res) => {
   }
 });
 
-router.post("/submit-stats", verifyToken, requireCaptain, async (req, res) => {
+router.post("/submit-stats", verifyToken, async (req, res) => {
   const {
     eventId,
     userId,
