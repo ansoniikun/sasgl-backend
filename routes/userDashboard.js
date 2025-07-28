@@ -96,4 +96,93 @@ router.put("/edit", verifyToken, async (req, res) => {
   }
 });
 
+// POST /golf-days/create — Create a golf day with packages
+router.post("/golf-days/create", verifyToken, async (req, res) => {
+  const userId = req.user.id;
+  const {
+    eventTitle,
+    description,
+    venueName,
+    organiserName,
+    contactPerson,
+    contactNumber,
+    startDate,
+    endDate,
+    email,
+    packagesCount,
+    poster,
+    packages,
+  } = req.body;
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    // Insert golf day
+    const result = await client.query(
+      `INSERT INTO golf_days (
+        event_title, description, venue_name, organiser_name,
+        contact_person, contact_number, start_date, end_date,
+        email, packages, poster_url, user_id
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+      RETURNING id`,
+      [
+        eventTitle,
+        description,
+        venueName,
+        organiserName,
+        contactPerson,
+        contactNumber,
+        startDate,
+        endDate,
+        email,
+        packagesCount,
+        poster,
+        userId,
+      ]
+    );
+
+    const golfDayId = result.rows[0].id;
+
+    // Insert packages
+    for (const pkg of packages) {
+      if (
+        !pkg.title ||
+        typeof pkg.title !== "string" ||
+        pkg.title.trim() === ""
+      ) {
+        throw new Error("Each package must have a valid title");
+      }
+
+      await client.query(
+        `INSERT INTO packages (
+      golf_day_id, title, type, price, max_slots, includes
+    ) VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          golfDayId,
+          pkg.title,
+          pkg.type,
+          pkg.price,
+          pkg.maxSlots,
+          JSON.stringify(pkg.includes),
+        ]
+      );
+    }
+
+    await client.query("COMMIT");
+    res
+      .status(201)
+      .json({ message: "Golf day and packages created successfully" });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("Error creating golf day:", err);
+    res
+      .status(500)
+      .json({ error: "Failed to create golf day", details: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 export default router;

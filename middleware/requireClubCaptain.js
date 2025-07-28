@@ -9,7 +9,7 @@ const requireClubCaptain = async (req, res, next) => {
       `
       SELECT cm.club_id FROM club_members cm
       JOIN events e ON e.club_id = cm.club_id
-      WHERE cm.user_id = $1 AND cm.role = 'captain' AND e.id = $2
+      WHERE cm.user_id = $1 AND cm.role IN ('captain', 'chairman') AND e.id = $2
       `,
       [userId, event_id]
     );
