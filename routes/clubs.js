@@ -462,7 +462,7 @@ router.delete(
 
       await client.query("BEGIN");
 
-      // Remove from club_members
+      // Remove user from club_members
       const result = await client.query(
         `DELETE FROM club_members WHERE club_id = $1 AND user_id = $2 AND status = 'approved' RETURNING *`,
         [clubId, userId]
@@ -473,17 +473,40 @@ router.delete(
         return res.status(404).json({ error: "Approved member not found" });
       }
 
-      // Also remove from event_participants
+      // Remove event participants linked to this club and user
       await client.query(
-        `DELETE FROM event_participants WHERE club_id = $1 AND user_id = $2`,
+        `
+        DELETE FROM event_participants 
+        WHERE event_id IN (SELECT id FROM events WHERE club_id = $1) 
+        AND user_id = $2
+        `,
         [clubId, userId]
       );
 
+      // Remove event-specific stats
+      await client.query(
+        `
+        DELETE FROM event_user_stats 
+        WHERE event_id IN (SELECT id FROM events WHERE club_id = $1) 
+        AND user_id = $2
+        `,
+        [clubId, userId]
+      );
+
+      // Remove user global stats
+      await client.query(
+        `
+        DELETE FROM user_stats 
+        WHERE user_id = $1
+        `,
+        [userId]
+      );
+
       await client.query("COMMIT");
-      res.json({ success: true, message: "Member removed successfully" });
+      res.json({ success: true, message: "Member and all stats removed" });
     } catch (err) {
       await client.query("ROLLBACK");
-      console.error("Error removing member:", err);
+      console.error("Error removing member and stats:", err);
       res.status(500).json({ error: "Internal server error" });
     } finally {
       client.release();
@@ -954,6 +977,31 @@ router.delete("/events/:eventId", verifyToken, async (req, res) => {
   } catch (err) {
     console.error("Error deleting event:", err);
     res.status(500).json({ error: "Failed to delete event" });
+  }
+});
+
+//Total games played
+router.get("/:clubId/user/games-played", verifyToken, async (req, res) => {
+  const { clubId } = req.params;
+  const userId = req.user.id;
+
+  try {
+    const result = await pool.query(
+      `
+      SELECT COUNT(*) AS games_played
+      FROM event_participants ep
+      JOIN events e ON ep.event_id = e.id
+      WHERE ep.user_id = $1 AND e.club_id = $2
+      `,
+      [userId, clubId]
+    );
+
+    const gamesPlayed = parseInt(result.rows[0].games_played, 10);
+
+    res.status(200).json({ gamesPlayed });
+  } catch (error) {
+    console.error("Error fetching games played:", error);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
