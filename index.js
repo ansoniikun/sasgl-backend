@@ -18,7 +18,8 @@ const allowedOrigins = [
   "http://localhost:3000",
 ];
 
-app.use(
+app.options(
+  "*",
   cors({
     origin: function (origin, callback) {
       if (!origin || allowedOrigins.includes(origin)) {
@@ -29,9 +30,11 @@ app.use(
     },
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: true, // if you use cookies/auth headers
+    credentials: true,
   })
 );
+
+app.set("trust proxy", 1);
 
 app.use(express.json());
 
