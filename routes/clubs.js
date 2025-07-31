@@ -228,6 +228,28 @@ router.get("/user-requests", verifyToken, async (req, res) => {
   }
 });
 
+// GET /api/clubs/:clubId/role
+router.get("/:clubId/role", verifyToken, async (req, res) => {
+  const { clubId } = req.params;
+  const userId = req.user.id;
+
+  try {
+    const result = await pool.query(
+      `SELECT role FROM club_members WHERE club_id = $1 AND user_id = $2 AND status = 'approved'`,
+      [clubId, userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Role not found in this club" });
+    }
+
+    res.json({ role: result.rows[0].role });
+  } catch (err) {
+    console.error("Error fetching club role:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // GET /api/clubs/:id
 router.get("/:id", verifyToken, async (req, res) => {
   const clubId = req.params.id;
@@ -305,28 +327,59 @@ router.get("/:id/members", verifyToken, async (req, res) => {
 
     // Fetch club members with total_points from user_stats and profile_picture from users
     const fetchMembersQuery = `
-      SELECT 
-        u.id,
-        u.name,
-        u.email,
-        u.phone_number,
-        u.role,
-        u.profile_picture,
-        cm.status,
-        cm.joined_at,
-        COALESCE(us.total_points, 0) AS score
-      FROM club_members cm
-      JOIN users u ON u.id = cm.user_id
-      LEFT JOIN user_stats us ON us.user_id = u.id
-      WHERE cm.club_id = $1
-      ORDER BY cm.joined_at DESC;
-    `;
+  SELECT 
+    u.id,
+    u.name,
+    u.email,
+    u.phone_number,
+    u.role AS account_role, -- This is the global role
+    u.profile_picture,
+    cm.status,
+    cm.joined_at,
+    cm.role AS role,         -- 🔁 Use this alias for the club-specific role
+    COALESCE(us.total_points, 0) AS score
+  FROM club_members cm
+  JOIN users u ON u.id = cm.user_id
+  LEFT JOIN user_stats us ON us.user_id = u.id
+  WHERE cm.club_id = $1
+  ORDER BY cm.joined_at DESC;
+`;
+
     const { rows } = await pool.query(fetchMembersQuery, [clubId]);
 
     res.json(rows);
   } catch (error) {
     console.error("Failed to fetch club members:", error);
     res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// PUT /api/clubs/:clubId/members/:userId/role
+router.put("/:clubId/members/:userId/role", verifyToken, async (req, res) => {
+  const { clubId, userId } = req.params;
+  const { newRole } = req.body;
+
+  try {
+    // Only allow if requester is a captain/chairman of the club
+    const authCheck = `
+      SELECT role FROM club_members 
+      WHERE club_id = $1 AND user_id = $2 AND status = 'approved'
+    `;
+    const { rows } = await pool.query(authCheck, [clubId, req.user.id]);
+    if (!rows.length || !["captain", "chairman"].includes(rows[0].role)) {
+      return res.status(403).json({ error: "Insufficient privileges" });
+    }
+
+    // Update the role
+    await pool.query(
+      `UPDATE club_members SET role = $1 WHERE club_id = $2 AND user_id = $3`,
+      [newRole, clubId, userId]
+    );
+
+    res.json({ message: "Role updated successfully" });
+  } catch (err) {
+    console.error("Failed to update member role:", err);
+    res.status(500).json({ error: "Server error" });
   }
 });
 
